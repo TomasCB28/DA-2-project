@@ -10,7 +10,9 @@
 struct Web {
     int id;                   // Unique integer ID to use in the Graph
     std::string variableName; // e.g., "sum", "i", "x"
-    std::set<int> lines;      // Set of execution lines where this variable is live
+    std::set<int> lines;// Set of execution lines where this variable is live
+
+    bool operator==(const Web &other) const {return id == other.id;}
 };
 
 // Structure to hold the configuration from registers.txt

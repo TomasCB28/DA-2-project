@@ -1,0 +1,6 @@
+# Register Allocation Results for ../datasets/ranges4.txt
+# Algorithm: basic
+t1 (Web 0): R1
+t2 (Web 1): SPILL
+t3 (Web 2): R1
+t4 (Web 3): SPILL

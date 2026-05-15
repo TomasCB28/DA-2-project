@@ -9,7 +9,7 @@
 #include <queue>
 #include <limits>
 #include <algorithm>
-#include "../data_structures/MutablePriorityQueue.h" // not needed for now
+
 
 template <class T>
 class Edge;
@@ -17,7 +17,7 @@ class Edge;
 #define INF std::numeric_limits<double>::max()
 
 /************************* Vertex  **************************/
-
+template <class T> class MutablePriorityQueue;
 template <class T>
 class Vertex {
 public:
