@@ -1,0 +1,6 @@
+#this line is just a comment to be ignored
+y: 7+,8,9,10-
+x: 1+,2,3,4,7
+x: 7,8
+x: 8,9-
+x: 8,11,12,13-
