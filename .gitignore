@@ -1,0 +1,43 @@
+# =========================
+# CLion & JetBrains IDEs
+# =========================
+.idea/
+cmake-build-*/
+
+# =========================
+# CMake (Ficheiros gerados)
+# =========================
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# =========================
+# Binários e Executáveis C++
+# =========================
+*.o
+*.obj
+*.so
+*.dll
+*.a
+*.lib
+*.exe
+*.out
+*.app
+DA2026_PRJ2
+
+# =========================
+# Ficheiros gerados pelo teu programa
+# =========================
+out.txt
+*.gv
+
+# =========================
+# Ficheiros de Sistema Operativo
+# =========================
+.DS_Store
+Thumbs.db
