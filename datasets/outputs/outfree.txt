@@ -1,0 +1,8 @@
+webs: 3
+web0: 1,2,3,4
+web1: 3,4,5,6
+web2: 1,2,5,6
+registers: 2
+r0: web0
+M: web1
+r1: web2

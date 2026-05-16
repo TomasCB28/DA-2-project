@@ -10,6 +10,7 @@
 
 namespace fs = std::filesystem;
 
+// Função para verificar se duas webs se sobrepõem no tempo (interferem)
 bool checkOverlap(const std::set<int>& set1, const std::set<int>& set2) {
     std::vector<int> intersection;
     std::set_intersection(set1.begin(), set1.end(),
@@ -29,6 +30,7 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
         return;
     }
 
+    // Configuração do caminho de saída para a pasta ../datasets/outputs/ (se não for batch)
     std::string finalPath = outputFile;
     if (!isBatch) {
         std::string outputDir = "../datasets/outputs";
@@ -48,7 +50,7 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
     bool allocationFailed = false;
 
     // ========================================================
-    // LÓGICA DE SPLITTING (Reconstrução iterativa do Grafo)
+    // TASK 2.3: LÓGICA DE SPLITTING (Reconstrução iterativa do Grafo)
     // ========================================================
     if (isSplitting) {
         int currentSplits = 0;
@@ -57,7 +59,6 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
 
         bool success = false;
         while (!success && !allocationFailed) {
-            // 1. Construir Grafo com os webs atuais
             Graph<int> interferenceGraph;
             for (const auto& web : webs) interferenceGraph.addVertex(web.id);
             for (size_t i = 0; i < webs.size(); ++i) {
@@ -68,7 +69,6 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
                 }
             }
 
-            // 2. Simplificação do Grafo (Stack)
             std::stack<int> S;
             std::set<int> activeNodes;
             std::map<int, int> activeDegrees;
@@ -97,7 +97,7 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
                 } else {
                     encravou = true;
                     int maxDeg = -1;
-                    for (int node : activeNodes) { // Escolhe o de maior grau para partir
+                    for (int node : activeNodes) {
                         if (activeDegrees[node] > maxDeg) { maxDeg = activeDegrees[node]; noProblematico = node; }
                     }
                     break;
@@ -107,8 +107,6 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
             if (encravou) {
                 if (currentSplits < maxMods) {
                     auto it = std::find_if(webs.begin(), webs.end(), [noProblematico](const Web& w){ return w.id == noProblematico; });
-
-                    // Só podemos partir se tiver pelo menos 2 linhas de tempo!
                     if (it != webs.end() && it->lines.size() > 1) {
                         std::cout << "-> Conflito! A dividir o Web " << noProblematico << " ao meio...\n";
                         Web original = *it;
@@ -126,15 +124,13 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
                         webs.push_back(w1);
                         webs.push_back(w2);
                         currentSplits++;
-                        // O loop while vai repetir e reconstruir o grafo!
                     } else {
-                        allocationFailed = true; // Demasiado pequeno para partir mais
+                        allocationFailed = true;
                     }
                 } else {
-                    allocationFailed = true; // Limite atingido
+                    allocationFailed = true;
                 }
             } else {
-                // 3. Coloração
                 webToRegister.clear();
                 while (!S.empty()) {
                     int node = S.top(); S.pop();
@@ -151,12 +147,76 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
                     if (color != -1) webToRegister[node] = color;
                     else allocationFailed = true;
                 }
-                if (!allocationFailed) success = true; // TERMINADO COM SUCESSO!
+                if (!allocationFailed) success = true;
             }
         }
     }
     // ========================================================
-    // LÓGICA BASIC & SPILLING (Passagem única)
+    // TASK 2.4: ALGORITMO LIVRE (LINEAR SCAN - Poletto & Sarkar)
+    // ========================================================
+    else if (config.algorithm == "free") {
+        std::cout << "-> A executar Algoritmo Livre: Linear Scan (Poletto & Sarkar)...\n";
+
+        std::vector<Web> sortedWebs = webs;
+        std::sort(sortedWebs.begin(), sortedWebs.end(), [](const Web& a, const Web& b) {
+            return *a.lines.begin() < *b.lines.begin();
+        });
+
+        std::vector<Web> active;
+        std::set<int> freeRegisters;
+        for (int i = 0; i < N; ++i) freeRegisters.insert(i);
+
+        for (const auto& w : sortedWebs) {
+            int start_w = *w.lines.begin();
+            int end_w = *w.lines.rbegin();
+
+            // Expirar intervalos antigos
+            for (auto it = active.begin(); it != active.end(); ) {
+                if (*it->lines.rbegin() < start_w) {
+                    freeRegisters.insert(webToRegister[it->id]);
+                    it = active.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+
+            // Alocar ou Fazer Spilling
+            if (active.size() == N) {
+                auto spillIt = active.begin();
+                int max_end = *spillIt->lines.rbegin();
+
+                for (auto it = active.begin(); it != active.end(); ++it) {
+                    if (*it->lines.rbegin() > max_end) {
+                        max_end = *it->lines.rbegin();
+                        spillIt = it;
+                    }
+                }
+
+                if (max_end > end_w) {
+                    std::cout << "   Linear Scan: Spilling Web " << spillIt->id
+                              << " (Dura ate " << max_end << " | Roubando registo para o Web " << w.id << ").\n";
+                    spilledWebs.insert(spillIt->id);
+                    int freedReg = webToRegister[spillIt->id];
+                    webToRegister.erase(spillIt->id);
+                    active.erase(spillIt);
+
+                    webToRegister[w.id] = freedReg;
+                    active.push_back(w);
+                } else {
+                    std::cout << "   Linear Scan: Spilling Web " << w.id
+                              << " (Dura demasiado tempo ate " << end_w << ").\n";
+                    spilledWebs.insert(w.id);
+                }
+            } else {
+                int reg = *freeRegisters.begin();
+                freeRegisters.erase(freeRegisters.begin());
+                webToRegister[w.id] = reg;
+                active.push_back(w);
+            }
+        }
+    }
+    // ========================================================
+    // TASKS 2.1 e 2.2: LÓGICA BASIC & SPILLING (Graph Coloring)
     // ========================================================
     else {
         Graph<int> interferenceGraph;
@@ -230,7 +290,9 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
         }
     }
 
-    // --- ESCRITA DO FICHEIRO DE SAÍDA ---
+    // ========================================================
+    // PASSO FINAL: ESCRITA DO FICHEIRO OUT.TXT
+    // ========================================================
     std::ofstream outFile(finalPath);
     if (!outFile.is_open()) {
         std::cerr << "Erro fatal: Nao foi possivel criar o ficheiro em " << finalPath << std::endl;
@@ -262,11 +324,13 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
 }
 
 int main(int argc, char* argv[]) {
+    // Modo Batch (Script automático da professora)
     if (argc == 5 && std::string(argv[1]) == "-b") {
         runAllocation(argv[2], argv[3], argv[4], true);
         return 0;
     }
 
+    // Modo Interativo (O teu menu)
     int choice;
     do {
         std::cout << "\n=== Ferramenta de Alocacao de Registos ===\n1. Executar Alocacao\n0. Sair\nEscolha: ";
@@ -275,7 +339,7 @@ int main(int argc, char* argv[]) {
             std::string ranges, regs, out;
             std::cout << "Ficheiro de ranges: "; std::cin >> ranges;
             std::cout << "Ficheiro de registos: "; std::cin >> regs;
-            std::cout << "Nome do ficheiro (ex: out.txt): "; std::cin >> out;
+            std::cout << "Nome do ficheiro de output (ex: out.txt): "; std::cin >> out;
             runAllocation(ranges, regs, out, false);
         }
     } while (choice != 0);
