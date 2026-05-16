@@ -1,0 +1,3 @@
+# Ficheiro de teste para o Splitting
+registers: 2
+algorithm: splitting, 1

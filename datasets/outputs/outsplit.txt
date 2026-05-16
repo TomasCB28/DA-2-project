@@ -1,0 +1,10 @@
+webs: 4
+web1: 3,4,5,6
+web2: 1,2,5,6
+web3: 1,2
+web4: 3,4
+registers: 2
+r1: web1
+r0: web2
+r1: web3
+r0: web4

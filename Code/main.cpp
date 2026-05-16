@@ -3,7 +3,8 @@
 #include <algorithm>
 #include <stack>
 #include <map>
-#include <filesystem> // Para criar pastas automaticamente
+#include <vector>
+#include <filesystem>
 #include "RegisterAllocator.h"
 #include "Graph.h"
 
@@ -28,102 +29,208 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
         return;
     }
 
-    // Configuração do caminho de saída
-    std::string finalPath;
-    if (isBatch) {
-        finalPath = outputFile;
-    } else {
-        // No modo interativo, assume que queres guardar em ../datasets/outputs/
+    std::string finalPath = outputFile;
+    if (!isBatch) {
         std::string outputDir = "../datasets/outputs";
-
-        // GARANTIA: Se a pasta não existir, o código cria-a agora!
-        if (!fs::exists(outputDir)) {
-            fs::create_directories(outputDir);
-        }
+        if (!fs::exists(outputDir)) fs::create_directories(outputDir);
         finalPath = outputDir + "/" + outputFile;
     }
 
     std::cout << "Config: " << config.numRegisters << " registos, Algoritmo: " << config.algorithm << std::endl;
 
-    // --- PASSO 2: CONSTRUIR GRAFO ---
-    Graph<int> interferenceGraph;
-    for (const auto& web : webs) interferenceGraph.addVertex(web.id);
-
-    for (size_t i = 0; i < webs.size(); ++i) {
-        for (size_t j = i + 1; j < webs.size(); ++j) {
-            if (checkOverlap(webs[i].lines, webs[j].lines)) {
-                interferenceGraph.addBidirectionalEdge(webs[i].id, webs[j].id, 0);
-            }
-        }
-    }
-
-    // --- PASSO 3: ALOCAÇÃO (STACK + SPILLING) ---
     int N = config.numRegisters;
-    int maxSpills = (config.algorithm == "spilling") ? config.k : 0;
-    std::stack<int> S;
-    std::set<int> spilledWebs;
+    bool isSpilling = config.algorithm.find("spilling") != std::string::npos;
+    bool isSplitting = config.algorithm.find("splitting") != std::string::npos;
+    int maxMods = (isSpilling || isSplitting) ? config.k : 0;
+
     std::map<int, int> webToRegister;
+    std::set<int> spilledWebs;
     bool allocationFailed = false;
 
-    std::set<int> activeNodes;
-    std::map<int, int> activeDegrees;
-    for (auto v : interferenceGraph.getVertexSet()) {
-        activeNodes.insert(v->getInfo());
-        activeDegrees[v->getInfo()] = v->getAdj().size();
-    }
+    // ========================================================
+    // LÓGICA DE SPLITTING (Reconstrução iterativa do Grafo)
+    // ========================================================
+    if (isSplitting) {
+        int currentSplits = 0;
+        int nextWebId = 0;
+        for (const auto& w : webs) if (w.id >= nextWebId) nextWebId = w.id + 1;
 
-    int currentSpills = 0;
-    while (!activeNodes.empty()) {
-        int nodeToRemove = -1;
-        for (int node : activeNodes) {
-            if (activeDegrees[node] < N) { nodeToRemove = node; break; }
+        bool success = false;
+        while (!success && !allocationFailed) {
+            // 1. Construir Grafo com os webs atuais
+            Graph<int> interferenceGraph;
+            for (const auto& web : webs) interferenceGraph.addVertex(web.id);
+            for (size_t i = 0; i < webs.size(); ++i) {
+                for (size_t j = i + 1; j < webs.size(); ++j) {
+                    if (checkOverlap(webs[i].lines, webs[j].lines)) {
+                        interferenceGraph.addBidirectionalEdge(webs[i].id, webs[j].id, 0);
+                    }
+                }
+            }
+
+            // 2. Simplificação do Grafo (Stack)
+            std::stack<int> S;
+            std::set<int> activeNodes;
+            std::map<int, int> activeDegrees;
+            for (auto v : interferenceGraph.getVertexSet()) {
+                activeNodes.insert(v->getInfo());
+                activeDegrees[v->getInfo()] = v->getAdj().size();
+            }
+
+            bool encravou = false;
+            int noProblematico = -1;
+
+            while (!activeNodes.empty()) {
+                int nodeToRemove = -1;
+                for (int node : activeNodes) {
+                    if (activeDegrees[node] < N) { nodeToRemove = node; break; }
+                }
+
+                if (nodeToRemove != -1) {
+                    activeNodes.erase(nodeToRemove);
+                    S.push(nodeToRemove);
+                    Vertex<int>* v = interferenceGraph.findVertex(nodeToRemove);
+                    for (auto edge : v->getAdj()) {
+                        int neighbor = edge->getDest()->getInfo();
+                        if (activeNodes.count(neighbor)) activeDegrees[neighbor]--;
+                    }
+                } else {
+                    encravou = true;
+                    int maxDeg = -1;
+                    for (int node : activeNodes) { // Escolhe o de maior grau para partir
+                        if (activeDegrees[node] > maxDeg) { maxDeg = activeDegrees[node]; noProblematico = node; }
+                    }
+                    break;
+                }
+            }
+
+            if (encravou) {
+                if (currentSplits < maxMods) {
+                    auto it = std::find_if(webs.begin(), webs.end(), [noProblematico](const Web& w){ return w.id == noProblematico; });
+
+                    // Só podemos partir se tiver pelo menos 2 linhas de tempo!
+                    if (it != webs.end() && it->lines.size() > 1) {
+                        std::cout << "-> Conflito! A dividir o Web " << noProblematico << " ao meio...\n";
+                        Web original = *it;
+                        webs.erase(it);
+
+                        std::vector<int> linhas(original.lines.begin(), original.lines.end());
+                        size_t meio = linhas.size() / 2;
+
+                        Web w1, w2;
+                        w1.id = nextWebId++;
+                        w2.id = nextWebId++;
+                        w1.lines.insert(linhas.begin(), linhas.begin() + meio);
+                        w2.lines.insert(linhas.begin() + meio, linhas.end());
+
+                        webs.push_back(w1);
+                        webs.push_back(w2);
+                        currentSplits++;
+                        // O loop while vai repetir e reconstruir o grafo!
+                    } else {
+                        allocationFailed = true; // Demasiado pequeno para partir mais
+                    }
+                } else {
+                    allocationFailed = true; // Limite atingido
+                }
+            } else {
+                // 3. Coloração
+                webToRegister.clear();
+                while (!S.empty()) {
+                    int node = S.top(); S.pop();
+                    std::set<int> usedColors;
+                    Vertex<int>* v = interferenceGraph.findVertex(node);
+                    for (auto edge : v->getAdj()) {
+                        int neighbor = edge->getDest()->getInfo();
+                        if (webToRegister.count(neighbor)) usedColors.insert(webToRegister[neighbor]);
+                    }
+                    int color = -1;
+                    for (int c = 0; c < N; ++c) {
+                        if (!usedColors.count(c)) { color = c; break; }
+                    }
+                    if (color != -1) webToRegister[node] = color;
+                    else allocationFailed = true;
+                }
+                if (!allocationFailed) success = true; // TERMINADO COM SUCESSO!
+            }
+        }
+    }
+    // ========================================================
+    // LÓGICA BASIC & SPILLING (Passagem única)
+    // ========================================================
+    else {
+        Graph<int> interferenceGraph;
+        for (const auto& web : webs) interferenceGraph.addVertex(web.id);
+        for (size_t i = 0; i < webs.size(); ++i) {
+            for (size_t j = i + 1; j < webs.size(); ++j) {
+                if (checkOverlap(webs[i].lines, webs[j].lines)) {
+                    interferenceGraph.addBidirectionalEdge(webs[i].id, webs[j].id, 0);
+                }
+            }
         }
 
-        if (nodeToRemove != -1) {
-            activeNodes.erase(nodeToRemove);
-            S.push(nodeToRemove);
-            Vertex<int>* v = interferenceGraph.findVertex(nodeToRemove);
-            for (auto edge : v->getAdj()) {
-                int neighbor = edge->getDest()->getInfo();
-                if (activeNodes.find(neighbor) != activeNodes.end()) activeDegrees[neighbor]--;
+        std::stack<int> S;
+        std::set<int> activeNodes;
+        std::map<int, int> activeDegrees;
+        for (auto v : interferenceGraph.getVertexSet()) {
+            activeNodes.insert(v->getInfo());
+            activeDegrees[v->getInfo()] = v->getAdj().size();
+        }
+
+        int currentSpills = 0;
+        while (!activeNodes.empty()) {
+            int nodeToRemove = -1;
+            for (int node : activeNodes) {
+                if (activeDegrees[node] < N) { nodeToRemove = node; break; }
             }
-        } else {
-            if (currentSpills < maxSpills) {
-                int maxDegNode = -1, maxDeg = -1;
-                for (int node : activeNodes) {
-                    if (activeDegrees[node] > maxDeg) { maxDeg = activeDegrees[node]; maxDegNode = node; }
-                }
-                spilledWebs.insert(maxDegNode);
-                activeNodes.erase(maxDegNode);
-                currentSpills++;
-                Vertex<int>* v = interferenceGraph.findVertex(maxDegNode);
+
+            if (nodeToRemove != -1) {
+                activeNodes.erase(nodeToRemove);
+                S.push(nodeToRemove);
+                Vertex<int>* v = interferenceGraph.findVertex(nodeToRemove);
                 for (auto edge : v->getAdj()) {
                     int neighbor = edge->getDest()->getInfo();
-                    if (activeNodes.find(neighbor) != activeNodes.end()) activeDegrees[neighbor]--;
+                    if (activeNodes.count(neighbor)) activeDegrees[neighbor]--;
                 }
-            } else { allocationFailed = true; break; }
+            } else {
+                if (isSpilling && currentSpills < maxMods) {
+                    int maxDegNode = -1, maxDeg = -1;
+                    for (int node : activeNodes) {
+                        if (activeDegrees[node] > maxDeg) { maxDeg = activeDegrees[node]; maxDegNode = node; }
+                    }
+                    std::cout << "-> Conflito! Spilling Web " << maxDegNode << " para memoria...\n";
+                    spilledWebs.insert(maxDegNode);
+                    activeNodes.erase(maxDegNode);
+                    currentSpills++;
+                    Vertex<int>* v = interferenceGraph.findVertex(maxDegNode);
+                    for (auto edge : v->getAdj()) {
+                        int neighbor = edge->getDest()->getInfo();
+                        if (activeNodes.count(neighbor)) activeDegrees[neighbor]--;
+                    }
+                } else { allocationFailed = true; break; }
+            }
+        }
+
+        if (!allocationFailed) {
+            while (!S.empty()) {
+                int node = S.top(); S.pop();
+                std::set<int> usedColors;
+                Vertex<int>* v = interferenceGraph.findVertex(node);
+                for (auto edge : v->getAdj()) {
+                    int neighbor = edge->getDest()->getInfo();
+                    if (webToRegister.count(neighbor)) usedColors.insert(webToRegister[neighbor]);
+                }
+                int color = -1;
+                for (int c = 0; c < N; ++c) {
+                    if (!usedColors.count(c)) { color = c; break; }
+                }
+                if (color != -1) webToRegister[node] = color;
+                else { allocationFailed = true; break; }
+            }
         }
     }
 
-    if (!allocationFailed) {
-        while (!S.empty()) {
-            int node = S.top(); S.pop();
-            std::set<int> usedColors;
-            Vertex<int>* v = interferenceGraph.findVertex(node);
-            for (auto edge : v->getAdj()) {
-                int neighbor = edge->getDest()->getInfo();
-                if (webToRegister.count(neighbor)) usedColors.insert(webToRegister[neighbor]);
-            }
-            int color = -1;
-            for (int c = 0; c < N; ++c) {
-                if (!usedColors.count(c)) { color = c; break; }
-            }
-            if (color != -1) webToRegister[node] = color;
-            else { allocationFailed = true; break; }
-        }
-    }
-
-    // --- PASSO 4: ESCRITA DO FICHEIRO ---
+    // --- ESCRITA DO FICHEIRO DE SAÍDA ---
     std::ofstream outFile(finalPath);
     if (!outFile.is_open()) {
         std::cerr << "Erro fatal: Nao foi possivel criar o ficheiro em " << finalPath << std::endl;
@@ -140,6 +247,7 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
     }
 
     if (allocationFailed) {
+        std::cout << "\nWARNING: A alocacao falhou! A gravar tudo para memoria.\n";
         outFile << "registers: 0\n";
         for (const auto& web : webs) outFile << "M: web" << web.id << "\n";
     } else {
