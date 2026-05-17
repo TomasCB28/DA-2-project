@@ -11,10 +11,9 @@
 using namespace std;
 
 /**
- * @brief Verifica se duas Webs se sobrepõem temporariamente (interferem).
+ * @brief Verifica se duas Webs se sobrepõem.
  *
- * Utiliza a ordenação nativa da estrutura set para calcular a interseção linear
- * entre duas gamas de tempo de vida de variáveis.
+ *
  *
  * @param set1 Conjunto de pontos de linha da primeira Web.
  * @param set2 Conjunto de pontos de linha da segunda Web.
@@ -31,32 +30,26 @@ bool checkOverlap(const set<LinePoint>& set1, const set<LinePoint>& set2) {
 }
 
 /**
- * @brief Executa o pipeline unificado de alocação de registos arquiteturais.
+ * @brief
  *
- * Esta função suporta dois paradigmas distintos de alocação determinados pelo ficheiro de configuração:
- * * 1. PARADIGMA LINEAR SCAN (Task 2.4 - free):
- * - Processa os intervalos de vida de forma contígua [start, end].
- * - Ordena as variáveis pelo seu ponto de nascimento e varre a linha temporal.
- * - Caso falte espaço físico, aplica a heurística de Poletto & Sarkar, sacrificando
- * para memória (spill) a variável ativa com o fim de vida mais longínquo (furthest end time).
+ * Esta função suporta duas diferentes abordagens:
+ * 1. LINEAR SCAN (Task 2.4 - free):
+ * - Ordena as variáveis pelo momento em que nascem e avança no tempo.
+ * - Se faltarem registos, sacrifica para a memória (spill) a variável
+ * que acaba mais tarde (heurística de Poletto & Sarkar).
  *
- * 2. PARADIGMA DE COLORAGEM DE GRAFOS (Tasks 2.1, 2.2, 2.3):
- * - CONSTRUÇÃO: Instancia vértices para cada Web e adiciona arestas de interferência.
- * - SIMPLIFICAÇÃO: Remove iterativamente nós com grau menor que N e empilha-os.
- * - RESOLUÇÃO DE BLOQUEIOS: Havendo encravamento, toma ações específicas por variante:
- * - basic: Falha imediatamente por violação de restrições de hardware.
- * - spilling: Aplica a heurística clássica de Chaitin, enviando o nó de maior grau para memória.
- * - splitting: Divide a live range da Web comprometida ao meio e reconstrói o grafo.
- * - SELEÇÃO: Desempilha e atribui o primeiro registo ('rX') livre não colidente.
- *
- * @param rangesFile Caminho para o ficheiro com as live ranges das variáveis.
- * @param registersFile Caminho para o ficheiro de configuração de registos e algoritmos.
- * @param outputFile Caminho para o ficheiro onde será gravado o resultado final.
- * @param isBatch Ativa o modo automático batch (true) ou o menu interativo (false).
+* * 2. COLARAÇÃO DE GRAFOS (Tasks 2.1, 2.2, 2.3):
+ * - Grafo: Liga variáveis (nós) que colidem no tempo.
+ * - Simplificação: Remove e empilha nós com grau < N.
+ * - Bloqueios (se o grafo encravar):
+ * > basic: Falha e desiste imediatamente.
+ * > spilling: Sacrifica para a memória o nó com maior grau
+ * > splitting: Corta a variável ao meio e reconstrói o grafo do zero.
+ * - Seleção: Desempilha e atribui o primeiro registo livre.
  *
  * @note Complexidade Temporal:
  * - O(W log W) para a variante 'free' (Linear Scan), onde W é o número de Webs.
- * - O(W^3) no pior caso para Coloração de Grafos devido à reconstrução iterativa do grafo.
+ * - O(W^3) no pior caso para Coloração de Grafos.
  */
 void runAllocation(const string& rangesFile, const string& registersFile, string outputFile, bool isBatch) {
     cout << "Loading data..." << endl;
@@ -81,9 +74,7 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
     set<int> spilledWebs;
     bool allocationFailed = false;
 
-    // ========================================================
-    // TASK 2.4: ALGORITMO LIVRE (LINEAR SCAN)
-    // ========================================================
+
     if (algo == "free") {
         cout << "-> A executar Algoritmo Livre: Linear Scan (Poletto & Sarkar)..." << endl;
 
@@ -100,7 +91,7 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
             int start_w = w.lines.begin()->number;
             int end_w = w.lines.rbegin()->number;
 
-            // Expirar intervalos antigos (libertar registos)
+
             for (auto it = active.begin(); it != active.end(); ) {
                 if (it->lines.rbegin()->number < start_w) {
                     freeRegisters.insert(webToRegister[it->id]);
@@ -110,7 +101,7 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
                 }
             }
 
-            // Atribuir registo ou efetuar Spilling protetivo
+
             if (active.size() == (size_t)N) {
                 auto spillIt = active.begin();
                 int max_end = spillIt->lines.rbegin()->number;
@@ -145,9 +136,7 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
             }
         }
     }
-    // ========================================================
-    // TASKS 2.1, 2.2 e 2.3: GRAPH COLORING (Basic, Spilling, Splitting)
-    // ========================================================
+
     else {
         int currentSplits = 0;
         bool success = false;
@@ -292,7 +281,7 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
         }
     }
     outFile.close();
-    cout << "SUCESSO! Ficheiro gerado em: " << finalPath << endl;
+    cout << "SUCESSO! Ficheiro criado em: " << finalPath << endl;
 }
 
 /**
