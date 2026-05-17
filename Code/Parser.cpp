@@ -31,7 +31,7 @@ bool hasOverlap(const set<LinePoint>& set1, const set<LinePoint>& set2) {
  * le os ficheiros com estrutura do tipo register,
  * retira o número de "registers" presentes, qual algoritmo aplicar (basic, spill, split (no split tambem o número máximo de cortes) ou free)
  *
- * @param filename Caminho do ficheiro.
+ * @param filename Caminho do ficheiro do tipo register.
  */
 Config parseRegistersFile(const string& filename) {
     Config config;
@@ -73,7 +73,7 @@ Config parseRegistersFile(const string& filename) {
  * @brief Efetua o parse dos ranges e constrói as Webs iniciais.
  *
  * Lê linha a linha as variáveis e os seus intervalos de atividade. caso haja sobreposiçao de ranges da mesma variável estes sao fundidos.
- * @param filename Caminho do ficheiro de texto contendo as live ranges das variáveis.
+ * @param filename Caminho do ficheiro do tipo ranges.
  * @return vector<Web> Vetor estruturado contendo todas as webs.
  *
 

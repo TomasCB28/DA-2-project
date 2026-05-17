@@ -13,11 +13,9 @@ using namespace std;
 /**
  * @brief Verifica se duas Webs se sobrepõem.
  *
- *
- *
- * @param set1 Conjunto de pontos de linha da primeira Web.
- * @param set2 Conjunto de pontos de linha da segunda Web.
- * @return true Se as duas webs partilharem pelo menos um ponto de linha, false caso contrário.
+ *@param set1 elementos da primeira Web.
+ * @param set2 elementos da segunda Web.
+ * @return true Se as duas webs partilharem pelo menos um elemento, false caso contrário.
  *
  * @note Complexidade Temporal: O(M + N), onde M e N representam o número de elementos de cada web.
  */
@@ -32,18 +30,18 @@ bool checkOverlap(const set<LinePoint>& set1, const set<LinePoint>& set2) {
 /**
  * @brief
  *
- * Esta função suporta duas diferentes abordagens:
- * 1. LINEAR SCAN (Task 2.4 - free):
+ * duas diferentes abordagens:
+ * 1. LINEAR SCAN:
  * - Ordena as variáveis pelo momento em que nascem e avança no tempo.
  * - Se faltarem registos, sacrifica para a memória (spill) a variável
  * que acaba mais tarde (heurística de Poletto & Sarkar).
  *
-* * 2. COLARAÇÃO DE GRAFOS (Tasks 2.1, 2.2, 2.3):
+* * 2. COLARAÇÃO DE GRAFOS:
  * - Grafo: Liga variáveis (nós) que colidem no tempo.
  * - Simplificação: Remove e empilha nós com grau < N.
  * - Bloqueios (se o grafo encravar):
  * > basic: Falha e desiste imediatamente.
- * > spilling: Sacrifica para a memória o nó com maior grau
+ * > spilling: vai para a memória o nó com maior grau
  * > splitting: Corta a variável ao meio e reconstrói o grafo do zero.
  * - Seleção: Desempilha e atribui o primeiro registo livre.
  *
@@ -249,9 +247,6 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
         }
     }
 
-    // ========================================================
-    // PASSO FINAL: ESCRITA DO FICHEIRO DE OUTPUT
-    // ========================================================
     ofstream outFile(finalPath);
     if (!outFile.is_open()) {
         cerr << "Erro Execucao: Nao foi possivel criar o ficheiro de Saida." << endl;
@@ -285,7 +280,7 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
 }
 
 /**
- * @brief Ponto de entrada da aplicação.
+ *  @brief Ponto de entrada da aplicação.
  * Encarrega-se de gerir o fluxo da consola e direcionar os ficheiros.
  *
  * @param n Contador de argumentos passados via terminal.

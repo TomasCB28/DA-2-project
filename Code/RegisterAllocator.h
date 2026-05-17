@@ -34,9 +34,9 @@ struct Web {
  * @brief Estrutura de configuração carregada a partir dos parâmetros do sistema.
  */
 struct Config {
-    int numRegisters = 0;      ///< Quantidade total N de registos físicos disponíveis na arquitetura.
-    string algorithm = "basic"; ///< Identificador da variante algorítmica ("basic", "spilling", "splitting").
-    int k = 0;                 ///< Parâmetro numérico limite para a profundidade de partição (splitting).
+    int numRegisters = 0;      ///< Quantidade total N de registos físicos.
+    string algorithm = "basic"; ///< Identificador da variante algorítmica ("basic", spilling, splitting ou free).
+    int k = 0;                 ///< caso seja splitting, é o numero máximo de partições
 };
 
 
