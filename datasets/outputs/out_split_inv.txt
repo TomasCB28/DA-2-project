@@ -1,0 +1,12 @@
+webs: 5
+web1: 1+,2,3,4,5,6,7,8-
+web2: 4+,5-
+web3: 4+,5-
+web1000: 1+,2,3,4
+web1001: 5,6,7,8-
+registers: 2
+M: web1
+M: web2
+r1: web3
+r0: web1000
+r0: web1001
