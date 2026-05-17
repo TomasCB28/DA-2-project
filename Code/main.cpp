@@ -4,7 +4,6 @@
 #include <stack>
 #include <map>
 #include <vector>
-
 #include <limits>
 #include "RegisterAllocator.h"
 #include "Graph.h"
@@ -12,10 +11,13 @@
 using namespace std;
 
 /**
- * @brief verifica se as duas webs se sobrepoem.
+ * @brief Verifica se duas Webs se sobrepõem temporariamente (interferem).
  *
- * @param set1 primeira Web.
- * @param set2 segunda Web.
+ * Utiliza a ordenação nativa da estrutura set para calcular a interseção linear
+ * entre duas gamas de tempo de vida de variáveis.
+ *
+ * @param set1 Conjunto de pontos de linha da primeira Web.
+ * @param set2 Conjunto de pontos de linha da segunda Web.
  * @return true Se as duas webs partilharem pelo menos um ponto de linha, false caso contrário.
  *
  * @note Complexidade Temporal: O(M + N), onde M e N representam o número de elementos de cada web.
@@ -29,29 +31,32 @@ bool checkOverlap(const set<LinePoint>& set1, const set<LinePoint>& set2) {
 }
 
 /**
- * @brief Executa o pipeline iterativo de alocação de registos por coloragem de grafos.
+ * @brief Executa o pipeline unificado de alocação de registos arquiteturais.
  *
- * O algoritmo implementa o framework de Chaitin-Briggs estruturado em 5 fases:
- * 1. CONSTRUÇÃO: Instancia vértices para cada Web e adiciona arestas bidirecionais
- * caso haja sobreposição temporal (interferência) via checkOverlap.
- * 2. SIMPLIFICAÇÃO: Remove iterativamente do grafo os nós com grau menor que N
- * (registos disponíveis) e empilha-os na 'simplifyStack'.
- * 3. RESOLUÇÃO DE BLOQUEIOS: Se a simplificação encravar, aplica uma solução:
- * - Se 'spilling': Escolhe o nó com menor rácio Custo/Grau (heurística de Chaitin).
- * - Se 'splitting': Divide a live range do nó ao meio, gera novos IDs e reitera.
- * 4. SELEÇÃO: Desempilha os nós e atribui-lhes a primeira cor (registo) livre
- * que não esteja a ser utilizada por nenhum dos seus vizinhos adjacentes.
- * 5. ESCRITA: Grava o mapa final no ficheiro de output, sinalizando registos ('rX')
- * ou falhas por spill de memória ('M').
+ * Esta função suporta dois paradigmas distintos de alocação determinados pelo ficheiro de configuração:
+ * * 1. PARADIGMA LINEAR SCAN (Task 2.4 - free):
+ * - Processa os intervalos de vida de forma contígua [start, end].
+ * - Ordena as variáveis pelo seu ponto de nascimento e varre a linha temporal.
+ * - Caso falte espaço físico, aplica a heurística de Poletto & Sarkar, sacrificando
+ * para memória (spill) a variável ativa com o fim de vida mais longínquo (furthest end time).
  *
- * @param rangesFile Caminho para o ficheiro de live ranges das variáveis.
- * @param registersFile Caminho para o ficheiro de configuração dos registos.
- * @param outputFile Caminho para o ficheiro onde será gravado o resultado.
- * @param isBatch Ativa o modo batch (true) ou o menu interativo (false).
+ * 2. PARADIGMA DE COLORAGEM DE GRAFOS (Tasks 2.1, 2.2, 2.3):
+ * - CONSTRUÇÃO: Instancia vértices para cada Web e adiciona arestas de interferência.
+ * - SIMPLIFICAÇÃO: Remove iterativamente nós com grau menor que N e empilha-os.
+ * - RESOLUÇÃO DE BLOQUEIOS: Havendo encravamento, toma ações específicas por variante:
+ * - basic: Falha imediatamente por violação de restrições de hardware.
+ * - spilling: Aplica a heurística clássica de Chaitin, enviando o nó de maior grau para memória.
+ * - splitting: Divide a live range da Web comprometida ao meio e reconstrói o grafo.
+ * - SELEÇÃO: Desempilha e atribui o primeiro registo ('rX') livre não colidente.
  *
- * @note Complexidade Temporal: O(W^3) no pior caso, onde W é o número de Webs.
- * A re-computação completa do grafo de interferência após cada operação de
- * split ou spill domina o limite assintótico superior do loop principal.
+ * @param rangesFile Caminho para o ficheiro com as live ranges das variáveis.
+ * @param registersFile Caminho para o ficheiro de configuração de registos e algoritmos.
+ * @param outputFile Caminho para o ficheiro onde será gravado o resultado final.
+ * @param isBatch Ativa o modo automático batch (true) ou o menu interativo (false).
+ *
+ * @note Complexidade Temporal:
+ * - O(W log W) para a variante 'free' (Linear Scan), onde W é o número de Webs.
+ * - O(W^3) no pior caso para Coloração de Grafos devido à reconstrução iterativa do grafo.
  */
 void runAllocation(const string& rangesFile, const string& registersFile, string outputFile, bool isBatch) {
     cout << "Loading data..." << endl;
@@ -59,12 +64,8 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
     vector<Web> webs = parseRangesFile(rangesFile);
     Config config = parseRegistersFile(registersFile);
 
-    if (webs.empty()) {
-        cerr << "Erro Execucao: Dados invalidos ou nenhuma Web encontrada." << endl;
-        return;
-    }
-    if (config.numRegisters <= 0) {
-        cerr << "Erro Execucao: Quantidade invalida de registos fornecida." << endl;
+    if (webs.empty() || config.numRegisters <= 0) {
+        cerr << "Erro Execucao: Dados invalidos ou registos a 0." << endl;
         return;
     }
 
@@ -74,194 +75,197 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
     int maxSplits = config.k;
 
     bool isSplitting = (algo == "splitting");
-    int currentSplits = 0;
-    bool allocationFailed = false;
+    bool isSpilling = (algo == "spilling");
 
     map<int, int> webToRegister;
     set<int> spilledWebs;
+    bool allocationFailed = false;
 
-    while (true) {
-        Graph<int> interferenceGraph;
-        for (const auto& web : webs) {
-            interferenceGraph.addVertex(web.id);
-        }
+    // ========================================================
+    // TASK 2.4: ALGORITMO LIVRE (LINEAR SCAN)
+    // ========================================================
+    if (algo == "free") {
+        cout << "-> A executar Algoritmo Livre: Linear Scan (Poletto & Sarkar)..." << endl;
 
-        for (size_t i = 0; i < webs.size(); ++i) {
-            for (size_t j = i + 1; j < webs.size(); ++j) {
-                if (checkOverlap(webs[i].lines, webs[j].lines)) {
-                    interferenceGraph.addBidirectionalEdge(webs[i].id, webs[j].id, 0.0);
+        vector<Web> sortedWebs = webs;
+        sort(sortedWebs.begin(), sortedWebs.end(), [](const Web& a, const Web& b) {
+            return a.lines.begin()->number < b.lines.begin()->number;
+        });
+
+        vector<Web> active;
+        set<int> freeRegisters;
+        for (int i = 0; i < N; ++i) freeRegisters.insert(i);
+
+        for (const auto& w : sortedWebs) {
+            int start_w = w.lines.begin()->number;
+            int end_w = w.lines.rbegin()->number;
+
+            // Expirar intervalos antigos (libertar registos)
+            for (auto it = active.begin(); it != active.end(); ) {
+                if (it->lines.rbegin()->number < start_w) {
+                    freeRegisters.insert(webToRegister[it->id]);
+                    it = active.erase(it);
+                } else {
+                    ++it;
                 }
             }
-        }
 
-        map<int, int> activeDegrees;
-        map<int, set<int>> adjList;
+            // Atribuir registo ou efetuar Spilling protetivo
+            if (active.size() == (size_t)N) {
+                auto spillIt = active.begin();
+                int max_end = spillIt->lines.rbegin()->number;
 
-        for (auto v : interferenceGraph.getVertexSet()) {
-            int uId = v->getInfo();
-            if (spilledWebs.count(uId)) continue;
-
-            int deg = 0;
-            for (auto e : v->getAdj()) {
-                int wId = e->getDest()->getInfo();
-                if (!spilledWebs.count(wId)) {
-                    deg++;
-                    adjList[uId].insert(wId);
-                }
-            }
-            activeDegrees[uId] = deg;
-        }
-
-        stack<int> simplifyStack;
-        set<int> removedNodes;
-        bool stuck = false;
-
-        while (removedNodes.size() + spilledWebs.size() < webs.size()) {
-            bool found = false;
-            for (auto const& [node, deg] : activeDegrees) {
-                if (removedNodes.count(node) || spilledWebs.count(node)) continue;
-
-                if (deg < N) {
-                    simplifyStack.push(node);
-                    removedNodes.insert(node);
-
-                    for (int neighbor : adjList[node]) {
-                        if (!removedNodes.count(neighbor) && !spilledWebs.count(neighbor)) {
-                            activeDegrees[neighbor]--;
-                        }
+                for (auto it = active.begin(); it != active.end(); ++it) {
+                    if (it->lines.rbegin()->number > max_end) {
+                        max_end = it->lines.rbegin()->number;
+                        spillIt = it;
                     }
-                    found = true;
-                    break;
+                }
+
+                if (max_end > end_w) {
+                    cout << "   Linear Scan: Spilling Web " << spillIt->id
+                         << " (Dura ate " << max_end << " | Roubando registo para o Web " << w.id << ").\n";
+                    spilledWebs.insert(spillIt->id);
+                    int freedReg = webToRegister[spillIt->id];
+                    webToRegister.erase(spillIt->id);
+                    active.erase(spillIt);
+
+                    webToRegister[w.id] = freedReg;
+                    active.push_back(w);
+                } else {
+                    cout << "   Linear Scan: Spilling Web " << w.id
+                         << " (Dura demasiado tempo ate " << end_w << ").\n";
+                    spilledWebs.insert(w.id);
+                }
+            } else {
+                int reg = *freeRegisters.begin();
+                freeRegisters.erase(freeRegisters.begin());
+                webToRegister[w.id] = reg;
+                active.push_back(w);
+            }
+        }
+    }
+    // ========================================================
+    // TASKS 2.1, 2.2 e 2.3: GRAPH COLORING (Basic, Spilling, Splitting)
+    // ========================================================
+    else {
+        int currentSplits = 0;
+        bool success = false;
+        int nextWebId = 1000;
+
+        while (!success && !allocationFailed) {
+            Graph<int> interferenceGraph;
+            for (const auto& web : webs) interferenceGraph.addVertex(web.id);
+
+            for (size_t i = 0; i < webs.size(); ++i) {
+                for (size_t j = i + 1; j < webs.size(); ++j) {
+                    if (checkOverlap(webs[i].lines, webs[j].lines)) {
+                        interferenceGraph.addBidirectionalEdge(webs[i].id, webs[j].id, 0.0);
+                    }
                 }
             }
 
-            if (!found) {
-                stuck = true;
-                break;
-            }
-        }
+            stack<int> S;
+            set<int> activeNodes;
+            map<int, int> activeDegrees;
 
-        if (stuck) {
+            for (auto v : interferenceGraph.getVertexSet()) {
+                if (spilledWebs.count(v->getInfo())) continue;
+                activeNodes.insert(v->getInfo());
+                int deg = 0;
+                for(auto e : v->getAdj()) {
+                    if(!spilledWebs.count(e->getDest()->getInfo())) deg++;
+                }
+                activeDegrees[v->getInfo()] = deg;
+            }
+
+            bool encravou = false;
             int targetNode = -1;
 
-            if (algo == "spilling") {
-                double minSpillCostRatio = numeric_limits<double>::max();
+            while (!activeNodes.empty()) {
+                int nodeToRemove = -1;
+                for (int node : activeNodes) {
+                    if (activeDegrees[node] < N) { nodeToRemove = node; break; }
+                }
 
-                for (auto const& [node, deg] : activeDegrees) {
-                    if (removedNodes.count(node) || spilledWebs.count(node)) continue;
-
-                    int webSize = 1;
-                    for (const auto& w : webs) {
-                        if (w.id == node) {
-                            webSize = w.lines.size();
-                            break;
+                if (nodeToRemove != -1) {
+                    activeNodes.erase(nodeToRemove);
+                    S.push(nodeToRemove);
+                    Vertex<int>* v = interferenceGraph.findVertex(nodeToRemove);
+                    for (auto edge : v->getAdj()) {
+                        int neighbor = edge->getDest()->getInfo();
+                        if (activeNodes.count(neighbor)) activeDegrees[neighbor]--;
+                    }
+                } else {
+                    encravou = true;
+                    int maxDeg = -1;
+                    for (int node : activeNodes) {
+                        if (activeDegrees[node] > maxDeg) {
+                            maxDeg = activeDegrees[node];
+                            targetNode = node;
                         }
                     }
-
-                    int degree = (deg > 0) ? deg : 1;
-                    double spillCostRatio = static_cast<double>(webSize) / degree;
-
-                    if (spillCostRatio < minSpillCostRatio) {
-                        minSpillCostRatio = spillCostRatio;
-                        targetNode = node;
-                    }
-                }
-            } else {
-                int maxDeg = -1;
-                for (auto const& [node, deg] : activeDegrees) {
-                    if (removedNodes.count(node) || spilledWebs.count(node)) continue;
-                    if (deg > maxDeg) {
-                        maxDeg = deg;
-                        targetNode = node;
-                    }
+                    break;
                 }
             }
 
-            if (isSplitting && currentSplits < maxSplits) {
-                Web original;
-                size_t origIndex = 0;
-                bool foundOrig = false;
-                for (size_t i = 0; i < webs.size(); ++i) {
-                    if (webs[i].id == targetNode) {
-                        original = webs[i];
-                        origIndex = i;
-                        foundOrig = true;
-                        break;
-                    }
-                }
+            if (encravou) {
+                if (isSplitting && currentSplits < maxSplits) {
+                    auto it = find_if(webs.begin(), webs.end(), [targetNode](const Web& w){ return w.id == targetNode; });
+                    if (it != webs.end() && it->lines.size() > 1) {
+                        cout << "-> Conflito! A dividir o Web " << targetNode << " ao meio...\n";
+                        Web original = *it;
+                        webs.erase(it);
 
-                if (!foundOrig || original.lines.size() <= 1) {
+                        vector<LinePoint> linhas(original.lines.begin(), original.lines.end());
+                        size_t meio = linhas.size() / 2;
+
+                        Web w1, w2;
+                        w1.id = nextWebId++; w1.variableName = original.variableName;
+                        w2.id = nextWebId++; w2.variableName = original.variableName;
+                        w1.lines.insert(linhas.begin(), linhas.begin() + meio);
+                        w2.lines.insert(linhas.begin() + meio, linhas.end());
+
+                        webs.push_back(w1);
+                        webs.push_back(w2);
+                        currentSplits++;
+                    } else {
+                        allocationFailed = true;
+                    }
+                } else if (isSpilling) {
+                    cout << "-> Conflito! Spilling Web " << targetNode << " para memoria...\n";
                     spilledWebs.insert(targetNode);
                 } else {
-                    vector<LinePoint> linhas(original.lines.begin(), original.lines.end());
-                    size_t meio = linhas.size() / 2;
-
-                    Web w1, w2;
-                    static int nextWebId = 1000;
-                    if (nextWebId == 1000) {
-                        for (const auto& w : webs) if (w.id >= nextWebId) nextWebId = w.id + 1;
-                    }
-
-                    w1.id = nextWebId++;
-                    w1.variableName = original.variableName;
-                    w2.id = nextWebId++;
-                    w2.variableName = original.variableName;
-
-                    w1.lines.insert(linhas.begin(), linhas.begin() + meio);
-                    w2.lines.insert(linhas.begin() + meio, linhas.end());
-
-                    webs.erase(webs.begin() + origIndex);
-                    webs.push_back(w1);
-                    webs.push_back(w2);
-                    currentSplits++;
+                    allocationFailed = true;
                 }
-                continue;
             } else {
-                spilledWebs.insert(targetNode);
-                continue;
+                webToRegister.clear();
+                while (!S.empty()) {
+                    int node = S.top(); S.pop();
+                    set<int> usedColors;
+                    Vertex<int>* v = interferenceGraph.findVertex(node);
+                    for (auto edge : v->getAdj()) {
+                        int neighbor = edge->getDest()->getInfo();
+                        if (webToRegister.count(neighbor)) usedColors.insert(webToRegister[neighbor]);
+                    }
+                    int color = -1;
+                    for (int c = 0; c < N; ++c) {
+                        if (!usedColors.count(c)) { color = c; break; }
+                    }
+                    if (color != -1) webToRegister[node] = color;
+                    else allocationFailed = true;
+                }
+                if (!allocationFailed) success = true;
             }
         }
-
-        webToRegister.clear();
-        while (!simplifyStack.empty()) {
-            int node = simplifyStack.top();
-            simplifyStack.pop();
-
-            set<int> usedRegisters;
-            for (auto v : interferenceGraph.getVertexSet()) {
-                if (v->getInfo() == node) {
-                    for (auto e : v->getAdj()) {
-                        int neighbor = e->getDest()->getInfo();
-                        if (webToRegister.count(neighbor)) {
-                            usedRegisters.insert(webToRegister[neighbor]);
-                        }
-                    }
-                    break;
-                }
-            }
-
-            int color = -1;
-            for (int r = 0; r < N; ++r) {
-                if (!usedRegisters.count(r)) {
-                    color = r;
-                    break;
-                }
-            }
-
-            if (color != -1) {
-                webToRegister[node] = color;
-            } else {
-                allocationFailed = true;
-                break;
-            }
-        }
-
-        break;
     }
 
+    // ========================================================
+    // PASSO FINAL: ESCRITA DO FICHEIRO DE OUTPUT
+    // ========================================================
     ofstream outFile(finalPath);
     if (!outFile.is_open()) {
-        cerr << "Erro Execucao: Nao foi possivel criar o ficheiro de saida." << std::endl;
+        cerr << "Erro Execucao: Nao foi possivel criar o ficheiro de Saida." << endl;
         return;
     }
 
@@ -270,9 +274,7 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
         outFile << "web" << web.id << ": ";
         for (auto it = web.lines.begin(); it != web.lines.end(); ++it) {
             outFile << it->number;
-            if (it->type != ' ') {
-                outFile << it->type;
-            }
+            if (it->type != ' ') outFile << it->type;
             outFile << (next(it) == web.lines.end() ? "" : ",");
         }
         outFile << "\n";
@@ -290,17 +292,16 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
         }
     }
     outFile.close();
-    cout << "SUCESSO! Ficheiro gerado." << endl;
+    cout << "SUCESSO! Ficheiro gerado em: " << finalPath << endl;
 }
 
 /**
  * @brief Ponto de entrada da aplicação.
- * processa o que está no terminal
+ * Encarrega-se de gerir o fluxo da consola e direcionar os ficheiros.
  *
- *@param n Contador de argumentos dados no terminal.
- * @param args Vetor de strings contendo os inputs da linha de comandos.
- * @return int Retorna 0 em caso de execução bem-sucedida, ou 1 se existirem erros de parametrização.
- *
+ * @param n Contador de argumentos passados via terminal.
+ * @param args Vetor de strings contendo os parâmetros da linha de comandos.
+ * @return int Retorna 0 em caso de sucesso, ou 1 se houver erros de parametrização.
  */
 int main(int n, char* args[]) {
     if (n >= 2 && string(args[1]) == "-b") {
@@ -311,8 +312,6 @@ int main(int n, char* args[]) {
         runAllocation(args[2], args[3], args[4], true);
         return 0;
     }
-
-
 
     int choice = -1;
     do {
@@ -326,13 +325,9 @@ int main(int n, char* args[]) {
 
         if (choice == 1) {
             string ranges, regs, out;
-            cout << "Ficheiro de gamas (ex: datasets/ranges6.txt): ";
-            cin >> ranges;
-            cout << "Ficheiro de registos (ex: datasets/registers3.txt): ";
-            cin >> regs;
-            cout << "Nome do ficheiro de Saida: ";
-            cin >> out;
-
+            cout << "Ficheiro de gamas (ex: ../datasets/ranges1.txt): "; cin >> ranges;
+            cout << "Ficheiro de registos (ex: ../datasets/registers1.txt): "; cin >> regs;
+            cout << "Nome do ficheiro de Saida: "; cin >> out;
             runAllocation(ranges, regs, out, false);
         }
     } while (choice != 0);
