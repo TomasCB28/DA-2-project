@@ -1,3 +1,13 @@
+/**
+ * @file main.cpp
+ * @brief Algoritmos de Alocação de Registos para Compiladores.
+ * * Este ficheiro contém a implementação do fluxo principal do alocador de
+ * registos baseado no algoritmo de coloragem de grafos de Chaitin-Briggs.
+ * Suporta as variantes: basic (T2.1), spilling inteligente (T2.2) e splitting (T2.3).
+ * * Faculdade de Engenharia da Universidade do Porto (FEUP)
+ * Disciplina: Desenho de Algoritmos (DA) - Spring 2026
+ */
+
 #include <iostream>
 #include <fstream>
 #include <algorithm>
@@ -9,7 +19,13 @@
 #include "RegisterAllocator.h"
 #include "Graph.h"
 
-// Verifica se duas webs se sobrepõem no tempo (interferem)
+/**
+ * @brief Verifica se duas webs se sobrepõem no tempo (interferem).
+ * * @param set1 Conjunto de pontos de linha da primeira Web.
+ * @param set2 Conjunto de pontos de linha da segunda Web.
+ * @return true Se houver interseção entre as linhas de vida (interferência), false caso contrário.
+ * * @note Complexidade Temporal: O(M + N), onde M e N são os tamanhos dos respetivos conjuntos.
+ */
 bool checkOverlap(const std::set<LinePoint>& set1, const std::set<LinePoint>& set2) {
     std::vector<LinePoint> intersection;
     std::set_intersection(set1.begin(), set1.end(),
@@ -18,6 +34,18 @@ bool checkOverlap(const std::set<LinePoint>& set1, const std::set<LinePoint>& se
     return !intersection.empty();
 }
 
+/**
+ * @brief Executa o algoritmo principal de alocação de registos.
+ * * Controla todo o fluxo iterativo de construção do grafo de interferência,
+ * simplificação por partição de graus, resolução de bloqueios (Spilling/Splitting)
+ * e coloragem (Fase de Seleção). No final, exporta o mapeamento para o ficheiro de saída.
+ * * @param rangesFile Caminho para o ficheiro de live ranges das variáveis.
+ * @param registersFile Caminho para o ficheiro de configuração dos registos.
+ * @param outputFile Caminho para o ficheiro onde será gravado o resultado.
+ * @param isBatch Indicador de modo batch (true) ou modo interativo (false).
+ * * @note Complexidade Temporal: O(W^3) no pior caso, onde W é o número de Webs.
+ * A construção do grafo inicial e re-computação em caso de splits/spills domina o loop.
+ */
 void runAllocation(const std::string& rangesFile, const std::string& registersFile, std::string outputFile, bool isBatch) {
     std::cout << "Loading data..." << std::endl;
 
@@ -33,9 +61,7 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
         return;
     }
 
-    // Configuração standard direta e portátil
     std::string finalPath = outputFile;
-
     int N = config.numRegisters;
     std::string algo = config.algorithm;
     int maxSplits = config.k;
@@ -47,8 +73,10 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
     std::map<int, int> webToRegister;
     std::set<int> spilledWebs;
 
+    // Loop Iterativo Principal do Otimizador
     while (true) {
         // 1. Construir o Grafo de Interferência
+        // Complexidade: O(W^2 * L) onde L é o número de linhas da live range
         Graph<int> interferenceGraph;
         for (const auto& web : webs) {
             interferenceGraph.addVertex(web.id);
@@ -82,6 +110,7 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
         }
 
         // 2. Fase de Simplificação (Algoritmo de Chaitin-Briggs)
+        // Complexidade: O(W^2) para encontrar e remover nós com grau < N
         std::stack<int> simplifyStack;
         std::set<int> removedNodes;
         bool stuck = false;
@@ -95,7 +124,7 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
                     simplifyStack.push(node);
                     removedNodes.insert(node);
 
-                    // Atualizar o grau dos vizinhos ativos
+                    // Atualizar de forma dinâmica o grau dos vizinhos ativos
                     for (int neighbor : adjList[node]) {
                         if (!removedNodes.count(neighbor) && !spilledWebs.count(neighbor)) {
                             activeDegrees[neighbor]--;
@@ -112,21 +141,54 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
             }
         }
 
-        // 3. Resolução de Bloqueios: Spilling ou Splitting
+        // 3. Resolução de Bloqueios (Spilling ou Splitting)
         if (stuck) {
             int targetNode = -1;
-            int maxDeg = -1;
 
-            for (auto const& [node, deg] : activeDegrees) {
-                if (removedNodes.count(node) || spilledWebs.count(node)) continue;
-                if (deg > maxDeg) {
-                    maxDeg = deg;
-                    targetNode = node;
+            if (algo == "spilling") {
+                // ========================================================
+                // HEURÍSTICA DE SPILLING INTELIGENTE (Tarefa T2.2)
+                // ========================================================
+                // Métrica de Chaitin: Custo (linhas vivas) / Grau Ativo
+                // Escolhe o menor rácio para minimizar o custo global de spill na CPU
+                double minSpillCostRatio = std::numeric_limits<double>::max();
+
+                for (auto const& [node, deg] : activeDegrees) {
+                    if (removedNodes.count(node) || spilledWebs.count(node)) continue;
+
+                    int webSize = 1;
+                    for (const auto& w : webs) {
+                        if (w.id == node) {
+                            webSize = w.lines.size();
+                            break;
+                        }
+                    }
+
+                    int degree = (deg > 0) ? deg : 1; // Prevenir divisão por zero
+                    double spillCostRatio = static_cast<double>(webSize) / degree;
+
+                    if (spillCostRatio < minSpillCostRatio) {
+                        minSpillCostRatio = spillCostRatio;
+                        targetNode = node;
+                    }
+                }
+            } else {
+                // ========================================================
+                // CRITÉRIO GREEDY CRU (Tarefa T2.1 / T2.3)
+                // ========================================================
+                // Escolha clássica baseada puramente no maior grau absoluto
+                int maxDeg = -1;
+                for (auto const& [node, deg] : activeDegrees) {
+                    if (removedNodes.count(node) || spilledWebs.count(node)) continue;
+                    if (deg > maxDeg) {
+                        maxDeg = deg;
+                        targetNode = node;
+                    }
                 }
             }
 
+            // Bloco de Splitting (Tarefa T2.3)
             if (isSplitting && currentSplits < maxSplits) {
-                // Encontrar a Web original para efetuar o Split
                 Web original;
                 size_t origIndex = 0;
                 bool foundOrig = false;
@@ -164,14 +226,15 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
                     webs.push_back(w2);
                     currentSplits++;
                 }
-                continue;
+                continue; // Reinicia o loop com o novo conjunto de webs alterado
             } else {
                 spilledWebs.insert(targetNode);
                 continue;
             }
         }
 
-        // 4. Fase de Seleção (Coloragem do Grafo)
+        // 4. Fase de Seleção (Coloragem Efetiva do Grafo)
+        // Complexidade: O(W * R), onde R é o número de registos
         webToRegister.clear();
         while (!simplifyStack.empty()) {
             int node = simplifyStack.top();
@@ -209,9 +272,8 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
         break;
     }
 
-    // ========================================================
-    // PASSO FINAL: ESCRITA DO FICHEIRO OUT.TXT
-    // ========================================================
+    // 5. Escrita do Ficheiro de Output Estruturado
+    // Complexidade: O(W * L)
     std::ofstream outFile(finalPath);
     if (!outFile.is_open()) {
         std::cerr << "Erro Execucao: Nao foi possivel criar o ficheiro de saida." << std::endl;
@@ -246,8 +308,13 @@ void runAllocation(const std::string& rangesFile, const std::string& registersFi
     std::cout << "SUCESSO! Ficheiro gerado." << std::endl;
 }
 
+/**
+ * @brief Função main - Ponto de entrada da aplicação.
+ * * Analisa os argumentos da linha de comandos (`argc` e `argv`) para decidir
+ * se invoca o fluxo em Modo Batch de avaliação ou o Menu Interativo clássico.
+ */
 int main(int argc, char* argv[]) {
-    // Modo Batch (Script de avaliação automática)
+    // Modo Batch (Script de avaliação automática Unix de Submissão)
     if (argc >= 2 && std::string(argv[1]) == "-b") {
         if (argc != 5) {
             std::cerr << "Erro: Argumentos em falta para o modo batch.\nUso: myProg -b <ranges.txt> <registers.txt> <allocation.txt>" << std::endl;
@@ -257,7 +324,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Modo Interativo
+    // Modo Interativo (Menu de Utilizador)
     int choice = -1;
     do {
         std::cout << "\n=== Ferramenta de Alocacao de Registos ===\n1. Executar Alocacao\n0. Sair\nEscolha: ";
@@ -268,16 +335,15 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        if (choice == 1) {
+        if (choice == 1)
+        {
             std::string ranges, regs, out;
             std::cout << "Ficheiro de gamas: ex(datasets/ranges6.txt) ";
             std::cin >> ranges;
-            std::cout << "Ficheiro de registos:datasets/registers3.txt) ";
+            std::cout << "Ficheiro de registos:ex(datasets/registers3.txt) ";
             std::cin >> regs;
             std::cout << "Nome do ficheiro de Saida: ";
             std::cin >> out;
-
-            runAllocation(ranges, regs, out, false);
         }
     } while (choice != 0);
 

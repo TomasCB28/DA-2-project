@@ -79,7 +79,7 @@ std::vector<Web> parseRangesFile(const std::string& filename) {
             if (token.empty()) continue;
 
             LinePoint lp;
-            lp.type = ' '; // Por padrão, linha neutra
+            lp.type = ' '; ///< Por padrão, linha neutra
 
             if (token.back() == '+') {
                 lp.type = '+';
@@ -95,15 +95,15 @@ std::vector<Web> parseRangesFile(const std::string& filename) {
 
         bool merged = false;
         for (auto& web : webs) {
-            if (web.variableName == varName && hasOverlap(web.lines, currentLines)) {
-                // Efetuar a fusão (Fuse) de pontos e misturar os sets
-                for (const auto& newLine : currentLines) {
+                if (web.variableName == varName && hasOverlap(web.lines, currentLines)) {
+                    /// Efetuar a fusão (Fuse) de pontos e misturar os sets
+                    for (const auto& newLine : currentLines) {
                     auto it = web.lines.find(newLine);
                     if (it != web.lines.end()) {
-                        // Se a linha já existe, aplicamos a regra de fusão do enunciado
-                        // (ex: um fim '-' e um início '+' na mesma linha fundem-se em continuidade ' ')
+                        /// Se a linha já existe, aplicamos a regra de fusão do enunciado
+                        /// (ex: um fim '-' e um início '+' na mesma linha fundem-se em continuidade ' ')
                         if ((it->type == '-' && newLine.type == '+') || (it->type == '+' && newLine.type == '-')) {
-                            // std::set não deixa alterar diretamente a chave, removemos e reinserimos atualizado
+                            /// std::set não deixa alterar diretamente a chave, removemos e reinserimos atualizado
                             web.lines.erase(it);
                             LinePoint fusedLine = newLine;
                             fusedLine.type = ' ';
