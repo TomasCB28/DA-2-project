@@ -1,3 +1,7 @@
+/**
+* @file Parser.cpp
+ * @brief Implementação do parser para leitura e processamento de ficheiros de texto.
+ */
 
 #include "RegisterAllocator.h"
 #include <fstream>

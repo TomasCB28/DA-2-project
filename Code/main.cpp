@@ -1,3 +1,8 @@
+/**
+* @file main.cpp
+ * @brief Ficheiro principal que contém o fluxo de execução e os algoritmos.
+ */
+
 #include <iostream>
 #include <fstream>
 #include <algorithm>

@@ -1,4 +1,7 @@
-
+/**
+* @file RegisterAllocator.h
+ * @brief Estruturas de dados e assinaturas para a alocação de registos.
+ */
 
 #ifndef REGISTER_ALLOCATOR_H
 #define REGISTER_ALLOCATOR_H
