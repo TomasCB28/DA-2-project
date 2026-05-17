@@ -1,22 +1,10 @@
-/**
- * @file main.cpp
- * @brief Implementação do fluxo principal do alocador de registos.
- *
- * Contém a lógica iterativa de coloragem de grafos baseada no algoritmo de Chaitin-Briggs.
- * Suporta as variantes de alocação básica (T2.1), alocação com spilling inteligente (T2.2)
- * e alocação com splitting (T2.3).
- *
- * Faculdade de Engenharia da Universidade do Porto (FEUP)
- * Disciplina: Desenho de Algoritmos (DA) - Ano Letivo 2025/2026
- */
-
 #include <iostream>
 #include <fstream>
 #include <algorithm>
 #include <stack>
 #include <map>
 #include <vector>
-#include <stdexcept>
+
 #include <limits>
 #include "RegisterAllocator.h"
 #include "Graph.h"
@@ -24,16 +12,13 @@
 using namespace std;
 
 /**
- * @brief Deteta interseções temporárias entre duas Webs de variáveis.
+ * @brief verifica se as duas webs se sobrepoem.
  *
- * Executa uma operação de interseção linear ordenada entre as duas coleções
- * de pontos de linha para determinar se existe uma sobreposição (interferência).
- *
- * @param set1 Conjunto de pontos de linha da primeira Web.
- * @param set2 Conjunto de pontos de linha da segunda Web.
+ * @param set1 primeira Web.
+ * @param set2 segunda Web.
  * @return true Se as duas webs partilharem pelo menos um ponto de linha, false caso contrário.
  *
- * @note Complexidade Temporal: O(M + N), onde M e N representam o número de elementos em cada conjunto.
+ * @note Complexidade Temporal: O(M + N), onde M e N representam o número de elementos de cada web.
  */
 bool checkOverlap(const set<LinePoint>& set1, const set<LinePoint>& set2) {
     vector<LinePoint> intersection;
@@ -44,19 +29,29 @@ bool checkOverlap(const set<LinePoint>& set1, const set<LinePoint>& set2) {
 }
 
 /**
- * @brief Orquestra o ciclo completo de alocação de registos por coloragem de grafos.
+ * @brief Executa o pipeline iterativo de alocação de registos por coloragem de grafos.
  *
- * Realiza o parse das entradas, monta dinamicamente o grafo de interferência,
- * efetua a simplificação heurística e aplica os mecanismos de spilling/splitting
- * em caso de bloqueio. Conclui com a atribuição de registos (fase de seleção) e gravação de dados.
+ * O algoritmo implementa o framework de Chaitin-Briggs estruturado em 5 fases:
+ * 1. CONSTRUÇÃO: Instancia vértices para cada Web e adiciona arestas bidirecionais
+ * caso haja sobreposição temporal (interferência) via checkOverlap.
+ * 2. SIMPLIFICAÇÃO: Remove iterativamente do grafo os nós com grau menor que N
+ * (registos disponíveis) e empilha-os na 'simplifyStack'.
+ * 3. RESOLUÇÃO DE BLOQUEIOS: Se a simplificação encravar, aplica uma solução:
+ * - Se 'spilling': Escolhe o nó com menor rácio Custo/Grau (heurística de Chaitin).
+ * - Se 'splitting': Divide a live range do nó ao meio, gera novos IDs e reitera.
+ * 4. SELEÇÃO: Desempilha os nós e atribui-lhes a primeira cor (registo) livre
+ * que não esteja a ser utilizada por nenhum dos seus vizinhos adjacentes.
+ * 5. ESCRITA: Grava o mapa final no ficheiro de output, sinalizando registos ('rX')
+ * ou falhas por spill de memória ('M').
  *
- * @param rangesFile Caminho relativo para o ficheiro com as gamas de vida (live ranges).
- * @param registersFile Caminho relativo para o ficheiro com a configuração de registos e algoritmo.
- * @param outputFile Nome ou caminho do ficheiro de texto a gerar com o resultado da alocação.
- * @param isBatch Define se a execução ocorre por script em segundo plano (true) ou interativamente (false).
+ * @param rangesFile Caminho para o ficheiro de live ranges das variáveis.
+ * @param registersFile Caminho para o ficheiro de configuração dos registos.
+ * @param outputFile Caminho para o ficheiro onde será gravado o resultado.
+ * @param isBatch Ativa o modo batch (true) ou o menu interativo (false).
  *
- * @note Complexidade Temporal: O(W^3) no pior caso, onde W é o número de Webs em processamento.
- * O loop repete-se a cada alteração estrutural feita pelos algoritmos de splitting ou spilling.
+ * @note Complexidade Temporal: O(W^3) no pior caso, onde W é o número de Webs.
+ * A re-computação completa do grafo de interferência após cada operação de
+ * split ou spill domina o limite assintótico superior do loop principal.
  */
 void runAllocation(const string& rangesFile, const string& registersFile, string outputFile, bool isBatch) {
     cout << "Loading data..." << endl;
@@ -300,26 +295,24 @@ void runAllocation(const string& rangesFile, const string& registersFile, string
 
 /**
  * @brief Ponto de entrada da aplicação.
+ * processa o que está no terminal
  *
- * Avalia os vetores de argumentos primitivos vindos do terminal. Se encontrar a flag `-b`,
- * direciona o processamento para o modo batch automático de testes; caso contrário,
- * abre o menu de texto interativo padrão para o utilizador.
- *
- * @param argc Contador de argumentos fornecidos via shell.
- * @param argv Vetor de strings contendo os argumentos literais da linha de comandos.
+ *@param n Contador de argumentos dados no terminal.
+ * @param args Vetor de strings contendo os inputs da linha de comandos.
  * @return int Retorna 0 em caso de execução bem-sucedida, ou 1 se existirem erros de parametrização.
  *
- * @note Complexidade Temporal: O(1) no processamento inicial das opções de menu.
  */
-int main(int argc, char* argv[]) {
-    if (argc >= 2 && string(argv[1]) == "-b") {
-        if (argc != 5) {
+int main(int n, char* args[]) {
+    if (n >= 2 && string(args[1]) == "-b") {
+        if (n != 5) {
             cerr << "Erro: Argumentos em falta para o modo batch.\nUso: myProg -b <ranges.txt> <registers.txt> <allocation.txt>" << endl;
             return 1;
         }
-        runAllocation(argv[2], argv[3], argv[4], true);
+        runAllocation(args[2], args[3], args[4], true);
         return 0;
     }
+
+
 
     int choice = -1;
     do {

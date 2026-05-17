@@ -1,14 +1,3 @@
-/**
- * @file Parser.cpp
- * @brief Implementação das funções de leitura e parsing de ficheiros.
- *
- * Contém os subprogramas responsáveis por carregar e processar as configurações
- * de registos e as gamas de tempo de vida das variáveis (live ranges), incluindo
- * a lógica de fusão (Fuse) de sub-gamas com sobreposição temporária.
- *
- * Faculdade de Engenharia da Universidade do Porto (FEUP)
- * Disciplina: Desenho de Algoritmos (DA) - Ano Letivo 2025/2026
- */
 
 #include "RegisterAllocator.h"
 #include <fstream>
@@ -18,16 +7,16 @@
 using namespace std;
 
 /**
- * @brief Auxiliar para verificar se dois conjuntos de pontos de linha se sobrepõem.
+ * @brief verifica se dois conjuntos de pontos se sobrepõem.
  *
  * Utiliza a ordenação nativa da estrutura set para calcular a interseção linear
  * entre duas gamas de tempo de vida de variáveis.
  *
- * @param set1 Primeiro conjunto de pontos de linha.
- * @param set2 Segundo conjunto de pontos de linha.
+ * @param set1 Primeiro conjunto de pontos
+ * @param set2 Segundo conjunto de pontos
  * @return true Se houver sobreposição em pelo menos uma linha, false caso contrário.
  *
- * @note Complexidade Temporal: O(M + N), onde M e N são os tamanhos dos respetivos conjuntos.
+ * @note Complexidade Temporal: O(M + N), M e N são os tamanhos dos conjuntos de pontos.
  */
 bool hasOverlap(const set<LinePoint>& set1, const set<LinePoint>& set2) {
     vector<LinePoint> intersection;
@@ -38,15 +27,11 @@ bool hasOverlap(const set<LinePoint>& set1, const set<LinePoint>& set2) {
 }
 
 /**
- * @brief Efetua a leitura e processamento do ficheiro de configuração de registos.
+ * @brief
+ * le os ficheiros com estrutura do tipo register,
+ * retira o número de "registers" presentes, qual algoritmo aplicar (basic, spill, split (no split tambem o número máximo de cortes) ou free)
  *
- * Extrai a quantidade de registos físicos disponíveis, o identificador do algoritmo
- * a aplicar (basic, spilling ou splitting) e o limite K de partições máximas permitidas.
- *
- * @param filename Caminho do ficheiro de configuração de registos.
- * @return Config Estrutura preenchida com as parametrizações do alocador.
- *
- * @note Complexidade Temporal: O(L), onde L é o número de linhas presentes no ficheiro.
+ * @param filename Caminho do ficheiro.
  */
 Config parseRegistersFile(const string& filename) {
     Config config;
@@ -85,17 +70,13 @@ Config parseRegistersFile(const string& filename) {
 }
 
 /**
- * @brief Efetua o parse das gamas de vida (live ranges) e constrói as Webs iniciais.
+ * @brief Efetua o parse dos ranges e constrói as Webs iniciais.
  *
- * Lê linha a linha as variáveis e os seus intervalos de atividade. Caso identifique
- * sub-gamas da mesma variável que se sobrepõem no tempo, efetua a fusão (Fuse) imediata
- * dos pontos e trata as continuidades dos marcadores de início ('+') e fim ('-').
- *
+ * Lê linha a linha as variáveis e os seus intervalos de atividade. caso haja sobreposiçao de ranges da mesma variável estes sao fundidos.
  * @param filename Caminho do ficheiro de texto contendo as live ranges das variáveis.
- * @return vector<Web> Vetor estruturado contendo todas as Webs prontas para a alocação.
+ * @return vector<Web> Vetor estruturado contendo todas as webs.
  *
- * @note Complexidade Temporal: O(R * W * P * log P) no pior caso, onde R é o número de linhas do
- * ficheiro, W é a quantidade de webs já processadas e P é o número médio de pontos por live range.
+
  */
 vector<Web> parseRangesFile(const string& filename) {
     vector<Web> webs;
